@@ -2,6 +2,8 @@
  * Header for object code improver
  */
 
+#include <stdio.h>
+
 #define	JBR	1
 #define	CBR	2
 #define	JMP	3
@@ -61,6 +63,7 @@
 #define	JHIS	9
 
 #define	BYTE	100
+#define	LSIZE	512
 
 struct node {
 	char	op;
@@ -73,16 +76,12 @@ struct node {
 	int	refc;
 };
 
-struct {
-	int	combop;
-};
-
 struct optab {
 	char	*opstring;
 	int	opcode;
 } optab[];
 
-char	line[512];
+char	line[LSIZE];
 struct	node	first;
 char	*curlp;
 int	nbrbr;
@@ -105,6 +104,7 @@ int	nlit;
 int	nchange;
 int	isn;
 int	debug;
+int	lastseg;
 char	*lasta;
 char	*lastr;
 char	*firstr;
@@ -122,4 +122,11 @@ char	ccloc[20];
 #define	OPHS	57
 
 struct optab *ophash[OPHS];
-struct { char lbyte; };
+struct	node *nonlab();
+char	*copy();
+char	*sbrk();
+char	*findcon();
+struct	node *insertl();
+struct	node *codemove();
+char	*sbrk();
+char	*alloc();

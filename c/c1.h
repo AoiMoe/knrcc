@@ -1,10 +1,16 @@
 /*
- *	C pass 2 header
+ * C code generator header
  */
 
-#define	swsiz	200
-#define	ossiz	500
+#include <stdio.h>
 
+#define	LTYPE	long	/* change to int for no long consts */
+#define	NCPS	8
+#define	NULL	0
+
+/*
+ *  Tree node for unary and binary
+ */
 struct	tnode {
 	int	op;
 	int	type;
@@ -12,17 +18,12 @@ struct	tnode {
 	struct	tnode *tr1, *tr2;
 };
 
-struct	bnode {
-	int	bop;
-	struct	tnode *btree;
-	int	lbl;
-	int	cond;
-};
-
+/*
+ * tree names for locals
+ */
 struct	tname {
-	int	nop;
-	int	ntype;
-	int	elsize;
+	int	op;
+	int	type;
 	char	class;
 	char	regno;
 	int	offset;
@@ -30,22 +31,48 @@ struct	tname {
 };
 
 /*
- * for field selections
+ * tree names for externals
  */
-struct tsel {
+struct	xtname {
 	int	op;
 	int	type;
-	int	degree;
-	struct	tnode *tr1;
-	char	flen;
-	char	bitoffs;
+	char	class;
+	char	regno;
+	int	offset;
+	char	name[NCPS];
 };
 
 struct	tconst {
-	int	cop;
-	int	ctype;
-	int	cdeg;
+	int	op;
+	int	type;
 	int	value;
+};
+
+/*
+ * long constants
+ */
+struct	lconst {
+	int	op;
+	int	type;
+	LTYPE	lvalue;
+};
+
+struct	ftconst {
+	int	op;
+	int	type;
+	int	value;
+	double	fvalue;
+};
+
+/*
+ * Node used for field assignemnts
+ */
+struct	fasgn {
+	int	op;
+	int	type;
+	int	degree;
+	struct	tnode *tr1, *tr2;
+	int	mask;
 };
 
 struct	optab {
@@ -78,28 +105,34 @@ int	nreg;
 int	isn;
 int	namsiz;
 int	line;
-char	ascbuf[518];
 int	nerror;
 struct	table	cctab[];
 struct	table	efftab[];
 struct	table	regtab[];
 struct	table	sptab[];
-struct	table	lsptab[];
+struct	table	lsptab[1];
 struct	instab	instab[];
 struct	instab	branchtab[];
 int	opdope[];
 char	*opntab[];
 int	nstack;
 int	nfloat;
-int	*spacep;
-int	treespace[ossiz];
-int	eolflg;
-struct tconst czero, cone, fczero;
+struct	tname	sfuncr;
+char	*funcbase;
+char	*curbase;
+char	*coremax;
+struct tconst czero, cone;
+struct	ftconst	fczero;
+long	totspace;
+/*
+ * Some special stuff for long comparisons
+ */
+int	xlab1, xlab2, xop, xzero;
 
 /*
 	operators
 */
-#define	EOF	0
+#define	EOFC	0
 #define	SEMI	1
 #define	LBRACE	2
 #define	RBRACE	3
@@ -110,6 +143,11 @@ struct tconst czero, cone, fczero;
 #define	COLON	8
 #define	COMMA	9
 #define	FSEL	10
+#define	FSELR	11
+#define	FSELT	12
+#define	FSELA	16
+#define	ULSH	17
+#define	ASULSH	18
 
 #define	KEYW	19
 #define	NAME	20
@@ -117,6 +155,8 @@ struct tconst czero, cone, fczero;
 #define	STRING	22
 #define	FCON	23
 #define	SFCON	24
+#define	LCON	25
+#define	SLCON	26
 
 #define	AUTOI	27
 #define	AUTOD	28
@@ -139,7 +179,7 @@ struct tconst czero, cone, fczero;
 #define	RSHIFT	45
 #define	LSHIFT	46
 #define	AND	47
-#define	NAND	55
+#define	ANDN	55
 #define	OR	48
 #define	EXOR	49
 #define	ARROW	50
@@ -151,6 +191,9 @@ struct tconst czero, cone, fczero;
 #define	LTOF	57
 #define	ITOL	58
 #define	LTOI	59
+#define	ITOP	13
+#define	PTOI	14
+#define	LTOP	15
 
 #define	EQUAL	60
 #define	NEQUAL	61
@@ -170,7 +213,7 @@ struct tconst czero, cone, fczero;
 #define	ASMOD	74
 #define	ASRSH	75
 #define	ASLSH	76
-#define	ASSAND	77
+#define	ASAND	77
 #define	ASOR	78
 #define	ASXOR	79
 #define	ASSIGN	80
@@ -178,14 +221,19 @@ struct tconst czero, cone, fczero;
 #define	LTIMES	82
 #define	LDIV	83
 #define	LMOD	84
-#define	ASSNAND	85
+#define	ASANDN	85
 #define	LASTIMES 86
 #define	LASDIV	87
 #define	LASMOD	88
 
 #define	QUEST	90
+#define	MAX	93
+#define	MAXP	94
+#define	MIN	95
+#define	MINP	96
 #define	LLSHIFT	91
 #define	ASLSHL	92
+#define	SEQNC	97
 #define	CALL1	98
 #define	CALL2	99
 #define	CALL	100
@@ -195,6 +243,7 @@ struct tconst czero, cone, fczero;
 #define	INIT	104
 #define	SETREG	105
 #define	LOAD	106
+#define	ITOC	109
 #define	RFORCE	110
 
 /*
@@ -204,8 +253,9 @@ struct tconst czero, cone, fczero;
 #define	LABEL	112
 #define	NLABEL	113
 #define	RLABEL	114
+#define	STRASG	115
+#define	STRSET	116
 #define	BDATA	200
-#define	WDATA	201
 #define	PROG	202
 #define	DATA	203
 #define	BSS	204
@@ -221,7 +271,11 @@ struct tconst czero, cone, fczero;
 #define	SNAME	215
 #define	RNAME	216
 #define	ANAME	217
-#define	NULL	218
+#define	NULLOP	218
+#define	SETSTK	219
+#define	SINIT	220
+#define	GLOBAL	221
+#define	C3BRANCH	222
 
 /*
  *	types
@@ -233,6 +287,7 @@ struct tconst czero, cone, fczero;
 #define	STRUCT	4
 #define	RSTRUCT	5
 #define	LONG	6
+#define	UNSIGN	7
 
 #define	TYLEN	2
 #define	TYPE	07
