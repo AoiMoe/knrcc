@@ -1,3 +1,5 @@
+#define	SBSIZE	2000
+char	sbf[SBSIZE];
 /* C command */
 
 char *tmp0;
@@ -17,6 +19,7 @@ int sflag;
 int cflag;
 int oflag;
 int proflag;
+int depth;
 int *ibuf;
 int *ibuf1;
 int *ibuf2;
@@ -32,6 +35,12 @@ struct symtab {
 int symsiz 200;
 struct symtab *defloc;
 struct symtab *incloc;
+struct symtab *eifloc;
+struct symtab *ifdloc;
+struct symtab *ifnloc;
+struct symtab *unxloc;
+int	trulvl;
+int	flslvl;
 char *stringbuf;
 char *pass0 "/lib/c0";
 char *pass1 "/lib/c1";
@@ -70,6 +79,7 @@ char *argv[]; {
 				case 'f':
 					pref = "/lib/fcrt0.o";
 					pass0 = "/lib/fc0";
+					pass1 = "/lib/fc1";
 					break;
 
 				case '2':
@@ -189,7 +199,7 @@ nocom:
 	if (cflag==0 && nl!=0) {
 		i = 0;
 		av[0] = "ld";
-		av[1] = "-x";
+		av[1] = "-X";
 		av[2] = pref;
 		j = 3;
 		while(i<nl)
@@ -227,7 +237,7 @@ char *file;
 {
 	int ib1[259], ib2[259], ob[259];
 	struct symtab stab[200];
-	char ln[196], sbf[1024];
+	char ln[196];
 	register int c;
 	register char *rlp;
 
@@ -248,11 +258,15 @@ char *file;
 		stab[c].name[0] = '\0';
 		stab[c].value = 0;
 	}
-	defloc = lookup("define", 1);
-	defloc->value = defloc->name;
-	incloc = lookup("include", 1);
-	incloc->value = incloc->name;
+	insym(&defloc, "define");
+	insym(&incloc, "include");
+	insym(&eifloc, "endif");
+	insym(&ifdloc, "ifdef");
+	insym(&ifnloc, "ifndef");
+	insym(&unxloc, "unix");
 	stringbuf = sbf;
+	trulvl = 0;
+	flslvl = 0;
 	line  = ln;
 	lineno = 0;
 	if (fcreat(tmp4, obuf) < 0) {
@@ -262,11 +276,13 @@ char *file;
 	while(getline()) {
 		if (ibuf==ibuf2 && pflag==0)
 			putc(001, obuf);	/*SOH: insert */
-		if (ln[0] != '#')
+		if (ln[0] != '#' && flslvl==0)
 			for (rlp = line; c = *rlp++;)
 				putc(c, obuf);
 		putc('\n', obuf);
 	}
+	for(rlp=line; c = *rlp++;)
+			putc(c,obuf);
 	fflush(obuf);
 	close(obuf[0]);
 	close(ibuf1[0]);
@@ -297,12 +313,39 @@ getline()
 				sch(c);
 			sch('\0');
 			lp--;
-			np = lookup(namep, state);
+			if (state>3) {
+				if (flslvl==0 &&(state+!lookup(namep,-1)->name[0])==5)
+					trulvl++;
+				else
+					flslvl++;
+		out:
+				while (c!='\n' && c!= '\0')
+					c = getch();
+				return(c);
+			}
+			if (state!=2 || flslvl==0)
+				{
+				ungetc(c);
+				np = lookup(namep, state);
+				c = getch();
+				}
 			if (state==1) {
 				if (np==defloc)
 					state = 2;
 				else if (np==incloc)
 					state = 3;
+				else if (np==ifnloc)
+					state = 4;
+				else if (np==ifdloc)
+					state = 5;
+				else if (np==eifloc) {
+					if (flslvl)
+						--flslvl;
+					else if (trulvl)
+						--trulvl;
+					else error("If-less endif");
+					goto out;
+				}
 				else {
 					error("Undefined control");
 					while (c!='\n' && c!='\0')
@@ -310,7 +353,10 @@ getline()
 					return(c);
 				}
 			} else if (state==2) {
+				if (flslvl)
+					goto out;
 				np->value = stringbuf;
+				savch(c);
 				while ((c=getch())!='\n' && c!='\0')
 					savch(c);
 				savch('\0');
@@ -327,7 +373,11 @@ getline()
 					sch(getch());
 			}
 			instring = 0;
+			if (flslvl)
+				goto out;
 			if (state==3) {
+				if (flslvl)
+					goto out;
 				*lp = '\0';
 				while ((c=getch())!='\n' && c!='\0');
 				if (ibuf==ibuf2)
@@ -346,6 +396,16 @@ getline()
 	if (state>1)
 		error("Control syntax");
 	return(c);
+}
+
+insym(sp, namep)
+struct symtab **sp;
+char *namep;
+{
+	register struct symtab *np;
+
+	*sp = np = lookup(namep, 1);
+	np->value = np->name;
 }
 
 error(s, x)
@@ -373,23 +433,23 @@ sch(c)
 savch(c)
 {
 	*stringbuf++ = c;
+	if (stringbuf-sbf < SBSIZE)
+		return;
+	error("Too much defining");
+	dexit();
 }
 
 getch()
 {
-	static peekc;
 	register int c;
 
-	if (peekc) {
-		c = peekc;
-		peekc = 0;
-		return(c);
-	}
 loop:
 	if ((c=getc1())=='/' && !instring) {
-		if ((peekc=getc1())!='*')
+		if ((c=getc1())!='*')
+			{
+			ungetc(c);
 			return('/');
-		peekc = 0;
+			}
 		for(;;) {
 			c = getc1();
 		cloop:
@@ -414,15 +474,25 @@ loop:
 	}
 	return(c);
 }
+char pushbuff[300];
+char *pushp pushbuff;
+ungetc(c)
+	{
+	*++pushp = c;
+	}
 
 getc1()
 {
 	register c;
 
+	if (*pushp !=0)
+		return(*pushp--);
+	depth=0;
 	if ((c = getc(ibuf)) < 0 && ibuf==ibuf2) {
 		close(ibuf2[0]);
 		ibuf = ibuf1;
 		putc('\n', obuf);
+		lineno++;
 		c = getc1();
 	}
 	if (c<0)
@@ -435,10 +505,9 @@ char *namep;
 {
 	register char *np, *snp;
 	register struct symtab *sp;
-	int i, c;
-
+	int i, c, around;
 	np = namep;
-	i = 0;
+	around = i = 0;
 	while (c = *np++)
 		i =+ c;
 	i =% symsiz;
@@ -453,9 +522,15 @@ char *namep;
 				return(sp);
 			}
 		if (++sp >= &symtab[symsiz])
+			if (around++)
+				{
+				error("too many defines");
+				dexit();
+				}
+			else
 			sp = symtab;
 	}
-	if (enterf) {
+	if (enterf>0) {
 		snp = namep;
 		for (np = &sp->name[0]; np < &sp->name[8];)
 			if (*np++ = *snp)
@@ -463,6 +538,14 @@ char *namep;
 	}
 	return(sp);
 }
+char revbuff[200];
+char	*bp;
+backsch(c)
+	{
+	if (bp-revbuff > 200)
+		error("Excessive define looping", bp--);
+	*bp++ = c;
+	}
 
 subst(np, sp)
 char *np;
@@ -471,12 +554,31 @@ struct symtab *sp;
 	register char *vp;
 
 	lp = np;
+	bp = revbuff;
+	if (depth++>100)
+		{
+		error("define recursion loop\n");
+		return;
+		}
 	if ((vp = sp->value) == 0)
 		return;
-	sch(' ');
+	/* arrange that define unix unix still
+	has no effect, avoiding rescanning */
+	if (streq(sp->name,sp->value))
+		{
+		while (*vp)
+			sch(*vp++);
+		return;
+		}
+	backsch(' ');
+	if (*vp == '(')
+		expdef(vp);
+	else
 	while (*vp)
-		sch(*vp++);
-	sch(' ');
+		backsch(*vp++);
+	backsch(' ');
+	while (bp>revbuff)
+		ungetc(*--bp);
 }
 
 getsuf(as)
@@ -558,7 +660,7 @@ char **l, *os;
 		while(c = *s++)
 			if (c != *t++)
 				break;
-		if (*t++ == '\0')
+		if (*t=='\0' && c=='\0')
 			return(0);
 		s = os;
 	}
@@ -571,4 +673,139 @@ char *f;
 	if (f==0)
 		return(0);
 	return(unlink(f));
+}
+expdef(proto)
+  char *proto;
+{
+char buffer[100], *parg[20], *pval[20], name[20], *cspace, *wp;
+char protcop[100], *pr;
+int narg, k, i, c;
+pr = protcop;
+while (*pr++ = *proto++);
+proto= protcop;
+for (narg=0; (parg[narg] = token(&proto)) != 0; narg++)
+	;
+/* now scan input */
+cspace = buffer;
+while ((c=getch()) == ' ');
+if (c != '(')
+	{
+	error("defined function requires arguments");
+	return;
+	}
+ungetc(c);
+for(k=0; pval[k] = coptok(&cspace); k++);
+if (k!=narg)
+ {
+  error("define argument mismatch");
+  return;
+ }
+while (c= *proto++)
+   {
+   if (!letter(c))
+      backsch(c);
+   else
+      {
+      wp = name;
+      *wp++ = c;
+      while (letnum(*proto))
+        *wp++ = *proto++;
+      *wp = 0;
+      for (k=0; k<narg; k++)
+      if(streq(name,parg[k]))
+        break;
+      wp = k <narg ? pval[k] : name;
+      while (*wp) backsch(*wp++);
+      }
+   }
+}
+token(cpp) char **cpp;
+{
+char *val;
+int stc;
+stc = **cpp;
+*(*cpp)++ = '\0';
+if (stc==')') return(0);
+while (**cpp == ' ') (*cpp)++;
+for (val = *cpp; (stc= **cpp) != ',' && stc!= ')'; (*cpp)++)
+  {
+  if (!letnum(stc) || (val == *cpp && !letter(stc)))
+    {
+    error("define prototype argument error");
+    break;
+    }
+  }
+return(val);
+}
+coptok (cpp) char **cpp; {
+char *val;
+int stc, stop,paren;
+paren = 0;
+val = *cpp;
+if (getch() == ')')
+  return(0);
+while (((stc = getch()) != ',' && stc != ')') || paren > 0)
+  {
+  if (stc == '"' || stc == '\'')
+    {
+    stop = stc;
+    if (stop == '\'')
+      *(*cpp)++ = '\'';
+    while ( (stc = getch()) != stop)
+      {
+      if (stc == '\n')
+        {
+        error ("non-terminated string");
+        break;
+        }
+      if (stc == '\\')
+        if ((stc= getch()) != stop && stc != '\\')
+          *(*cpp)++ = '\\';
+      *(*cpp)++ = stc;
+      }
+    if (stop == '\'') 
+      *(*cpp)++ = '\'';
+    }
+  else if (stc == '\\')
+      {
+      stc = getch();
+      if (stc != '"' && stc != '\\')
+        *(*cpp)++ = '\\';
+      *(*cpp)++ = stc;
+      }
+  else
+    {
+    *(*cpp)++ = stc;
+    if (stc == '(')
+        paren++;
+    if (stc == ')')
+        paren--;
+    }
+  }
+*(*cpp)++ = 0;
+ungetc(stc);
+return(val);
+}
+letter(c)
+{
+if ((c >= 'a' && c <= 'z') ||
+    (c >= 'A' && c <= 'Z') ||
+    (c == '_'))
+    return (1);
+else
+    return(0);
+}
+letnum(c)
+{
+if (letter(c) || (c >= '0' && c <= '9'))
+  return(1);
+else
+  return(0);
+}
+streq(s,t) char *s, *t;
+{
+int c;
+while ( (c= *s++) == *t++)
+   if (c==0) return(1);
+return(0);
 }

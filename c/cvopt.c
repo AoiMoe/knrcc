@@ -128,11 +128,6 @@ loop:
 		putchar('M');
 		goto loop;
 
-	case 'V':
-		putchar('V');
-		snlflg++;
-		goto loop;
-
 	case 'S':
 		putchar('K');
 subtre:
@@ -174,9 +169,23 @@ l1:
 	case '%':
 		if (smode)
 			printf(".text;");
+		if (ssmode==0) {
+			if ((peekc=getc())=='[') {
+				peekc = 0;
+				printf(".data;");
+				while((c=getc())!=']')
+					putchar(c);
+				getc();
+				printf(";.text;");
+				goto loop;
+			}
+		}
 loop1:
 		switch (c=getc()) {
 
+		case ' ':
+		case '\t':
+			goto loop1;
 		case 'a':
 			m = 16;
 			t = flag();
@@ -224,6 +233,13 @@ pf:
 				peekc = c;
 			printf(".byte %o,%o", m, t);
 			goto loop1;
+		case '[':
+			printf("L%d=", labno++);
+			while ((c=getc())!=']')
+				putchar(c);
+			ssmode = 0;
+			smode = 0;
+			goto loop;
 
 		case '\n':
 			printf("\nL%d\n", labno);
@@ -330,6 +346,10 @@ l1:
 
 	case 's':
 		f = 6;
+		goto l1;
+
+	case 'l':
+		f = 8;
 		goto l1;
 
 	case 'p':

@@ -2,6 +2,9 @@
  *	C pass 2 header
  */
 
+#define	swsiz	200
+#define	ossiz	500
+
 struct	tnode {
 	int	op;
 	int	type;
@@ -24,6 +27,18 @@ struct	tname {
 	char	regno;
 	int	offset;
 	int	nloc;
+};
+
+/*
+ * for field selections
+ */
+struct tsel {
+	int	op;
+	int	type;
+	int	degree;
+	struct	tnode *tr1;
+	char	flen;
+	char	bitoffs;
 };
 
 struct	tconst {
@@ -63,7 +78,6 @@ int	nreg;
 int	isn;
 int	namsiz;
 int	line;
-char	binbuf[518];
 char	ascbuf[518];
 int	nerror;
 struct	table	cctab[];
@@ -72,16 +86,16 @@ struct	table	regtab[];
 struct	table	sptab[];
 struct	table	lsptab[];
 struct	instab	instab[];
+struct	instab	branchtab[];
 int	opdope[];
+char	*opntab[];
 int	nstack;
 int	nfloat;
 int	*spacep;
-int	*spacemax;
-int	*treebase;
+int	treespace[ossiz];
+int	eolflg;
 struct tconst czero, cone, fczero;
 
-#define	swsiz	200
-#define	ossiz	500
 /*
 	operators
 */
@@ -95,6 +109,7 @@ struct tconst czero, cone, fczero;
 #define	RPARN	7
 #define	COLON	8
 #define	COMMA	9
+#define	FSEL	10
 
 #define	KEYW	19
 #define	NAME	20
@@ -124,6 +139,7 @@ struct tconst czero, cone, fczero;
 #define	RSHIFT	45
 #define	LSHIFT	46
 #define	AND	47
+#define	NAND	55
 #define	OR	48
 #define	EXOR	49
 #define	ARROW	50
@@ -131,6 +147,10 @@ struct tconst czero, cone, fczero;
 #define	FTOI	52
 #define	LOGAND	53
 #define	LOGOR	54
+#define	FTOL	56
+#define	LTOF	57
+#define	ITOL	58
+#define	LTOI	59
 
 #define	EQUAL	60
 #define	NEQUAL	61
@@ -154,9 +174,18 @@ struct tconst czero, cone, fczero;
 #define	ASOR	78
 #define	ASXOR	79
 #define	ASSIGN	80
-#define	ASSNAND	81
+#define	TAND	81
+#define	LTIMES	82
+#define	LDIV	83
+#define	LMOD	84
+#define	ASSNAND	85
+#define	LASTIMES 86
+#define	LASDIV	87
+#define	LASMOD	88
 
 #define	QUEST	90
+#define	LLSHIFT	91
+#define	ASLSHL	92
 #define	CALL1	98
 #define	CALL2	99
 #define	CALL	100
@@ -167,18 +196,47 @@ struct tconst czero, cone, fczero;
 #define	SETREG	105
 #define	LOAD	106
 #define	RFORCE	110
-#define	BRANCH	111
-#define	LABEL	112
 
 /*
-	types
-*/
+ * Intermediate code operators
+ */
+#define	BRANCH	111
+#define	LABEL	112
+#define	NLABEL	113
+#define	RLABEL	114
+#define	BDATA	200
+#define	WDATA	201
+#define	PROG	202
+#define	DATA	203
+#define	BSS	204
+#define	CSPACE	205
+#define	SSPACE	206
+#define	SYMDEF	207
+#define	SAVE	208
+#define	RETRN	209
+#define	EVEN	210
+#define	PROFIL	212
+#define	SWIT	213
+#define	EXPR	214
+#define	SNAME	215
+#define	RNAME	216
+#define	ANAME	217
+#define	NULL	218
+
+/*
+ *	types
+ */
 #define	INT	0
 #define	CHAR	1
 #define	FLOAT	2
 #define	DOUBLE	3
 #define	STRUCT	4
 #define	RSTRUCT	5
+#define	LONG	6
+
+#define	TYLEN	2
+#define	TYPE	07
+#define	XTYPE	(03<<3)
 #define	PTR	010
 #define	FUNC	020
 #define	ARRAY	030
@@ -187,16 +245,16 @@ struct tconst czero, cone, fczero;
 	storage	classes
 */
 #define	KEYWC	1
-#define	MOS	4
-#define	AUTO	5
-#define	EXTERN	6
-#define	STATIC	7
-#define	REG	8
-#define	STRTAG	9
-#define	ARG	10
-#define	OFFS	12
-#define	XOFFS	13
-#define	SOFFS	14
+#define	MOS	10
+#define	AUTO	11
+#define	EXTERN	12
+#define	STATIC	13
+#define	REG	14
+#define	STRTAG	15
+#define	ARG	16
+#define	OFFS	20
+#define	XOFFS	21
+#define	SOFFS	22
 
 /*
 	Flag	bits
@@ -211,3 +269,4 @@ struct tconst czero, cone, fczero;
 #define	COMMUTE	0100
 #define	RASSOC	0200
 #define	LEAF	0400
+#define	CNVRT	01000

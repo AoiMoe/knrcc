@@ -1,7 +1,6 @@
 #
 /*
  *	 C object code improver
- *	  Copyright 1974 Bell Telephone Laboratories, Incorporated
  */
 
 #include "c2h.c"
@@ -138,9 +137,11 @@ char **argv;
 		printf("%d skips over jumps\n", nskip);
 		printf("%d sob's added\n", nsob);
 		printf("%d redundant tst's\n", nrtst);
+		printf("%d literals eliminated\n", nlit);
 		printf("%dK core\n", ((lastr+01777)>>10)&077);
 		flush();
 	}
+	exit(0);
 }
 
 input()
@@ -266,9 +267,10 @@ output()
 					printf("b");
 				break;
 			}
-		if (t->code)
+		if (t->code) {
+			reducelit(t);
 			printf("\t%s\n", t->code);
-		else if (t->op==JBR || t->op==CBR)
+		} else if (t->op==JBR || t->op==CBR)
 			printf("\tL%d\n", t->labno);
 		else
 			printf("\n");
@@ -288,6 +290,38 @@ output()
 		printf("\n");
 		continue;
 	}
+}
+
+/*
+ * Notice addresses of the form
+ * $xx,xx(r)
+ * and replace them with (pc),xx(r)
+ *     -- Thanx and a tip of the Hatlo hat to Bliss-11.
+ */
+reducelit(at)
+struct node *at;
+{
+	register char *c1, *c2;
+	char *c2s;
+	register struct node *t;
+
+	t = at;
+	if (*t->code != '$')
+		return;
+	c1 = t->code;
+	while (*c1 != ',')
+		if (*c1++ == '\0')
+			return;
+	c2s = c1;
+	c1++;
+	if (*c1=='*')
+		c1++;
+	c2 = t->code+1;
+	while (*c1++ == *c2++);
+	if (*--c1!='(' || *--c2!=',')
+		return;
+	t->code = copy("(pc)", c2s);
+	nlit++;
 }
 
 copy(ap)
@@ -325,10 +359,10 @@ char *ap;
 opsetup()
 {
 	register struct optab *optp, **ophp;
-	register int *p;
+	register char *p;
 
 	for (optp = optab; p = optp->opstring; optp++) {
-		ophp = &ophash[((p[0]+p[1].lbyte)&077777) % OPHS];
+		ophp = &ophash[(((p[0]<<3)+(p[1]<<1)+p[2])&077777) % OPHS];
 		while (*ophp++)
 			if (ophp > &ophash[OPHS])
 				ophp = ophash;
@@ -350,7 +384,7 @@ oplook()
 	while (*lp=='\t' || *lp==' ')
 		lp++;
 	curlp = lp;
-	ophp = &ophash[((tmpop[0].int+tmpop[2])&077777) % OPHS];
+	ophp = &ophash[(((tmpop[0]<<3)+(tmpop[1]<<1)+tmpop[2])&077777) % OPHS];
 	while (optp = *ophp) {
 		op = optp->opstring;
 		lp = tmpop;
@@ -422,7 +456,7 @@ iterate()
 	for (p = first.forw; p!=0; p = p->forw) {
 		if ((p->op==JBR||p->op==CBR||p->op==JSW) && p->ref) {
 			rp = nonlab(p->ref);
-			if (rp->op==JBR && rp->labno) {
+			if (rp->op==JBR && rp->labno && p!=rp) {
 				nbrbr++;
 				p->labno = rp->labno;
 				decref(p->ref);
@@ -483,12 +517,12 @@ xjump(ap)
 
 	nxj = 0;
 	p1 = ap;
-	if ((p2 = p1->ref) == 0)
+	if ((p2 = p1->ref)==0)
 		return(0);
 	for (;;) {
 		while ((p1 = p1->back) && p1->op==LABEL);
 		while ((p2 = p2->back) && p2->op==LABEL);
-		if (!equop(p1, p2))
+		if (!equop(p1, p2) || p1==p2)
 			return(nxj);
 		p3 = insertl(p2);
 		p1->combop = JBR;

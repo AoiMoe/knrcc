@@ -1,6 +1,5 @@
 /*
  * Header for object code improver
- *  Copyright 1974 Bell Telephone Laboratories, Incorporated
  */
 
 #define	JBR	1
@@ -101,6 +100,7 @@ int	nskip;
 int	ncomj;
 int	nsob;
 int	nrtst;
+int	nlit;
 
 int	nchange;
 int	isn;
@@ -122,5 +122,4 @@ char	ccloc[20];
 #define	OPHS	57
 
 struct optab *ophash[OPHS];
-struct { int int;};
 struct { char lbyte; };

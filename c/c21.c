@@ -1,7 +1,6 @@
 #
 /*
  * C object code improver-- second part
- * Copyright 1974 Bell Telephone Laboratories, Incorporated
  */
 
 #include "c2h.c"
@@ -29,6 +28,8 @@ rmove()
 		flt = NREG;
 
 	case MOV:
+		if (p->subop==BYTE)
+			goto badmov;
 		dualop(p);
 		if ((r = findrand(regs[RT1], flt)) >= 0) {
 			if (r == flt+isreg(regs[RT2]) && p->forw->op!=CBR) {
@@ -69,6 +70,7 @@ rmove()
 	case MUL:
 	case DIV:
 	case ASH:
+	badmov:
 		dualop(p);
 		repladdr(p, 0, flt);
 		source(regs[RT1]);
@@ -251,7 +253,7 @@ alloc(an)
 	n =& ~01;
 	if (lasta+n >= lastr) {
 		if (sbrk(2000) == -1) {
-			write(2, "Out of space\n", 14);
+			write(2, "Optimizer: out of space\n", 14);
 			exit(1);
 		}
 		lastr =+ 2000;

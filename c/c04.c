@@ -1,295 +1,343 @@
 #
+/*
+ * C compiler
+ *
+ *
+ */
+
 #include "c0h.c"
-/*
- *  info on operators:
- *   01-- is binary operator
- *   02-- left (or only) operand must be lvalue
- *   04-- is relational operator
- *  010-- is assignment-type operator
- *  020-- non-float req. on left
- *  040-- non-float req. on right
- * 0100-- is commutative
- * 0200-- is right, not left-associative
- * 0400-- is leaf of tree
- * *0XX000-- XX is priority of operator
- */
-int opdope[] {
-	000000,	/* EOF */
-	000000,	/* ; */
-	000000,	/* { */
-	000000,	/* } */
-	036000,	/* [ */
-	002000,	/* ] */
-	036000,	/* ( */
-	002000,	/* ) */
-	014201,	/* : */
-	007001,	/* , */
-	000000,	/* 10 */
-	000000,	/* 11 */
-	000000,	/* 12 */
-	000000,	/* 13 */
-	000000,	/* 14 */
-	000000,	/* 15 */
-	000000,	/* 16 */
-	000000,	/* 17 */
-	000000,	/* 18 */
-	000000,	/* 19 */
-	000400,	/* name */
-	000400,	/* short constant */
-	000400,	/* string */
-	000400,	/* float */
-	000400,	/* double */
-	000000,	/* 25 */
-	000000,	/* 26 */
-	000000,	/* 27 */
-	000000,	/* 28 */
-	034200,	/* sizeof */
-	034202,	/* ++pre */
-	034202,	/* --pre */
-	034202,	/* ++post */
-	034202,	/* --post */
-	034220,	/* !un */
-	034202,	/* &un */
-	034220,	/* *un */
-	034200,	/* -un */
-	034220,	/* ~un */
-	036001,	/* . (structure reference) */
-	030101,	/* + */
-	030001,	/* - */
-	032101,	/* * */
-	032001,	/* / */
-	032001,	/* % */
-	026061,	/* >> */
-	026061,	/* << */
-	020161,	/* & */
-	017161,	/* | */
-	017161,	/* ^ */
-	036001,	/* -> */
-	000000, /* int -> double */
-	000000, /* double -> int */
-	016001, /* && */
-	015001, /* || */
-	000000, /* 55 */
-	000000, /* 56 */
-	000000, /* 57 */
-	000000, /* 58 */
-	000000,	/* 59 */
-	022005,	/* == */
-	022005,	/* != */
-	024005,	/* <= */
-	024005,	/* < */
-	024005,	/* >= */
-	024005,	/* > */
-	024005,	/* <p */
-	024005,	/* <=p */
-	024005,	/* >p */
-	024005,	/* >=p */
-	012213,	/* =+ */
-	012213,	/* =- */
-	012213,	/* =* */
-	012213,	/* =/ */
-	012213,	/* =% */
-	012253,	/* =>> */
-	012253,	/* =<< */
-	012253,	/* =& */
-	012253,	/* =| */
-	012253,	/* =^ */
-	012213,	/* = */
-	000000,	/* 81 */
-	000000,	/* 82 */
-	000000,	/* 83 */
-	000000,	/* 84 */
-	000000,	/* 85 */
-	000000,	/* 86 */
-	000000,	/* 87 */
-	000000,	/* 88 */
-	000000,	/* 89 */
-	014201,	/* ? */
-	000000,	/* 91 */
-	000000,	/* 92 */
-	000000,	/* 93 */
-	000000,	/* 94 */
-	000000,	/* 95 */
-	000000,	/* 96 */
-	000000,	/* 97 */
-	000000,	/* 98 */
-	000000,	/* 99 */
-	036001,	/* call */
-	036001,	/* mcall */
-	000000,	/* goto */
-	000000,	/* jump cond */
-	000000,	/* branch cond */
-	000000,	/* 105 */
-	000000, /* 106 */
-	000000,	/* 107 */
-	000000,	/* 108 */
-	000000,	/* 109 */
-	000000	/* force r0 */
-};
 
 /*
- * conversion table:
- * 0100-- convert left operand
- * 0*0XX-- XX is conversion number, to wit:
- *  000: none
- *  001: int -> ptr
- *  002: ptr -> int
- *  003: int -> double
- *  004: double -> int
- *  077: generally illegal
+ * Reduce the degree-of-reference by one.
+ * e.g. turn "ptr-to-int" into "int".
  */
-char cvtab[] {
-	0000,	/* i : i */
-	0000,	/* i : c */
-	0103,	/* i : f */
-	0103,	/* i : d */
-	0077,	/* i : s */
-	0101,	/* i : *i */
-	0000,	/* i : *c */
-	0101,	/* i : *f */
-	0101,	/* i : *d */
-	0101,	/* i : *s */
-	0101,	/* i : ** */
+decref(at)
+{
+	register t;
 
-	0000,	/* c : i */
-	0000,	/* c : c */
-	0103,	/* c : f */
-	0103,	/* c : d */
-	0077,	/* c : s */
-	0101,	/* c : *i */
-	0000,	/* c : *c */
-	0101,	/* c : *f */
-	0101,	/* c : *d */
-	0101,	/* c : *s */
-	0101,	/* c : ** */
-
-	0003,	/* f : i */
-	0003,	/* f : c */
-	0000,	/* f : f */
-	0000,	/* f : d */
-	0077,	/* f : s */
-	0077,	/* f : *i */
-	0077,	/* f : *c */
-	0077,	/* f : *f */
-	0077,	/* f : *d */
-	0077,	/* f : *s */
-	0077,	/* f : ** */
-
-	0003,	/* d : i */
-	0003,	/* d : c */
-	0000,	/* d : f */
-	0000,	/* d : d */
-	0077,	/* d : s */
-	0077,	/* d : *i */
-	0077,	/* d : *c */
-	0077,	/* d : *f */
-	0077,	/* d : *d */
-	0077,	/* d : *s */
-	0077,	/* d : ** */
-
-	0077,	/* s : i */
-	0077,	/* s : c */
-	0077,	/* s : f */
-	0077,	/* s : d */
-	0077,	/* s : s */
-	0077,	/* s : *i */
-	0077,	/* s : *c */
-	0077,	/* s : *f */
-	0077,	/* s : *d */
-	0077,	/* s : *s */
-	0077,	/* s : ** */
-
-	0001,	/* *i : i */
-	0001,	/* *i : c */
-	0077,	/* *i : f */
-	0077,	/* *i : d */
-	0077,	/* *i : s */
-	0002,	/* *i : *i */
-	0077,	/* *i : *c */
-	0077,	/* *i : *f */
-	0077,	/* *i : *d */
-	0077,	/* *i : *s */
-	0002,	/* *i : ** */
-
-	0000,	/* *c : i */
-	0000,	/* *c : c */
-	0077,	/* *c : f */
-	0077,	/* *c : d */
-	0077,	/* *c : s */
-	0077,	/* *c : *i */
-	0000,	/* *c : *c */
-	0077,	/* *c : *f */
-	0077,	/* *c : *d */
-	0077,	/* *c : *s */
-	0077,	/* *c : ** */
-
-	0001,	/* *f : i */
-	0001,	/* *f : c */
-	0077,	/* *f : f */
-	0077,	/* *f : d */
-	0077,	/* *f : s */
-	0077,	/* *f : *i */
-	0077,	/* *f : *c */
-	0002,	/* *f : *f */
-	0077,	/* *f : *d */
-	0077,	/* *f : *s */
-	0077,	/* *f : ** */
-
-	0001,	/* *d : i */
-	0001,	/* *d : c */
-	0077,	/* *d : f */
-	0077,	/* *d : d */
-	0077,	/* *d : s */
-	0077,	/* *d : *i */
-	0077,	/* *d : *c */
-	0077,	/* *d : *f */
-	0002,	/* *d : *d */
-	0077,	/* *d : *s */
-	0077,	/* *d : ** */
-
-	0001,	/* *s : i */
-	0001,	/* *s : c */
-	0077,	/* *s : f */
-	0077,	/* *s : d */
-	0077,	/* *s : s */
-	0077,	/* *s : *i */
-	0077,	/* *s : *c */
-	0077,	/* *s : *f */
-	0077,	/* *s : *d */
-	0002,	/* *s : *s */
-	0077,	/* *s : ** */
-
-	0001,	/* ** : i */
-	0001,	/* ** : c */
-	0077,	/* ** : f */
-	0077,	/* ** : d */
-	0077,	/* ** : s */
-	0002,	/* ** : *i */
-	0077,	/* ** : *c */
-	0077,	/* ** : *f */
-	0077,	/* ** : *d */
-	0077,	/* ** : *s */
-	0002	/* ** : ** */
-};
+	t = at;
+	if ((t & ~TYPE) == 0) {
+		error("Illegal indirection");
+		return(t);
+	}
+	return((t>>TYLEN) & ~TYPE | t&TYPE);
+}
 
 /*
- * character type table
+ * Increase the degree of reference by
+ * one; e.g. turn "int" to "ptr-to-int".
  */
-char ctab[] {
-	EOF,	INSERT,	UNKN,	UNKN,	UNKN,	UNKN,	UNKN,	UNKN,
-	UNKN,	SPACE,	NEWLN,	UNKN,	UNKN,	UNKN,	UNKN,	UNKN,
-	UNKN,	UNKN,	UNKN,	UNKN,	UNKN,	UNKN,	UNKN,	UNKN,
-	UNKN,	UNKN,	UNKN,	UNKN,	UNKN,	UNKN,	UNKN,	UNKN,
-	SPACE,	EXCLA,	DQUOTE,	UNKN,	UNKN,	MOD,	 AND,	SQUOTE,
-	LPARN,	RPARN,	TIMES,	PLUS,	COMMA,	MINUS,	PERIOD,	DIVIDE,
-	DIGIT,	DIGIT,	DIGIT,	DIGIT,	DIGIT,	DIGIT,	DIGIT,	DIGIT,
-	DIGIT,	DIGIT,	COLON,	SEMI,	LESS,	ASSIGN,	GREAT,	QUEST,
-	UNKN,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,
-	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,
-	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,
-	LETTER,	LETTER,	LETTER,	LBRACK,	UNKN,	RBRACK,	EXOR,	LETTER,
-	UNKN,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,
-	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,
-	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,	LETTER,
-	LETTER,	LETTER,	LETTER,	LBRACE,	OR,	RBRACE,	COMPL,	UNKN
-};
+incref(t)
+{
+	return(((t&~TYPE)<<TYLEN) | (t&TYPE) | PTR);
+}
+
+/*
+ * Make a tree that causes a branch to lbl
+ * if the tree's value is non-zero together with the cond.
+ */
+cbranch(tree, lbl, cond)
+struct tnode *tree;
+{
+	rcexpr(block(1,CBRANCH,tree,lbl,cond));
+}
+
+/*
+ * Write out a tree.
+ */
+rcexpr(tree)
+struct tnode *tree;
+{
+
+	treeout(tree);
+	outcode("BN", EXPR, line);
+}
+
+treeout(atree)
+struct tnode *atree;
+{
+	register struct tnode *tree;
+
+	if ((tree = atree) == 0)
+		return;
+	switch(tree->op) {
+
+	case 0:
+		outcode("B", NULL);
+		return;
+
+	case NAME:
+		outcode("BNN", NAME, tree->class, tree->type);
+		if (tree->class==EXTERN)
+			outcode("S", tree->nname);
+		else
+			outcode("N", tree->nloc);
+		return;
+
+	case CON:
+	case FCON:
+	case SFCON:
+		outcode("BNN", tree->op, tree->type, tree->value);
+		return;
+
+	case FSEL:
+		treeout(tree->tr1);
+		outcode("BNN", tree->op, tree->type, tree->tr2);
+		return;
+
+	case CBRANCH:
+		treeout(tree->btree);
+		outcode("BNN", tree->op, tree->lbl, tree->cond);
+		return;
+
+	default:
+		treeout(tree->tr1);
+		if (opdope[tree->op]&BINARY)
+			treeout(tree->tr2);
+		outcode("BN", tree->op, tree->type);
+		return;
+	}
+}
+
+/*
+ * Generate a branch
+ */
+branch(lab) {
+	outcode("BN", BRANCH, lab);
+}
+
+/*
+ * Generate a label
+ */
+label(l) {
+	outcode("BN", LABEL, l);
+}
+
+/*
+ * ap is a tree node whose type
+ * is some kind of pointer; return the size of the object
+ * to which the pointer points.
+ */
+plength(ap)
+struct tname *ap;
+{
+	register t, l;
+	register struct tname *p;
+
+	p = ap;
+	if (p==0 || ((t=p->type)&~TYPE) == 0)		/* not a reference */
+		return(1);
+	p->type = decref(t);
+	l = length(p);
+	p->type = t;
+	return(l);
+}
+
+/*
+ * return the number of bytes in the object
+ * whose tree node is acs.
+ */
+length(acs)
+struct tnode *acs;
+{
+	register t, n;
+	register struct tnode *cs;
+
+	cs = acs;
+	t = cs->type;
+	n = 1;
+	while ((t&XTYPE) == ARRAY) {
+		t = decref(t);
+		n = dimtab[cs->ssp&0377];
+	}
+	if ((t&~TYPE)==FUNC)
+		return(0);
+	if (t>=PTR)
+		return(2*n);
+	switch(t&TYPE) {
+
+	case INT:
+		return(2*n);
+
+	case CHAR:
+		return(n);
+
+	case FLOAT:
+	case LONG:
+		return(4*n);
+
+	case DOUBLE:
+		return(8*n);
+
+	case STRUCT:
+		return(n * dimtab[cs->lenp&0377]);
+
+	case RSTRUCT:
+		error("Bad structure");
+		return(0);
+	}
+	error("Compiler error (length)");
+}
+
+/*
+ * The number of bytes in an object, rounded up to a word.
+ */
+rlength(cs)
+struct tnode *cs;
+{
+	return((length(cs)+ALIGN) & ~ALIGN);
+}
+
+/*
+ * After an "if (...) goto", look to see if the transfer
+ * is to a simple label.
+ */
+simplegoto()
+{
+	register struct hshtab *csp;
+
+	if ((peeksym=symbol())==NAME && nextchar()==';') {
+		csp = csym;
+		if (csp->hclass==0 && csp->htype==0) {
+			csp->htype = ARRAY;
+			if (csp->hoffset==0)
+				csp->hoffset = isn++;
+		}
+		if ((csp->hclass==0||csp->hclass==STATIC)
+		 &&  csp->htype==ARRAY) {
+			peeksym = -1;
+			return(csp->hoffset);
+		}
+	}
+	return(0);
+}
+
+/*
+ * Return the next non-white-space character
+ */
+nextchar()
+{
+	while (spnextchar()==' ')
+		peekc = 0;
+	return(peekc);
+}
+
+/*
+ * Return the next character, translating all white space
+ * to blank and handling line-ends.
+ */
+spnextchar()
+{
+	register c;
+
+	if ((c = peekc)==0)
+		c = getchar();
+	if (c=='\t')
+		c = ' ';
+	else if (c=='\n') {
+		c = ' ';
+		if (inhdr==0)
+			line++;
+		inhdr = 0;
+	} else if (c=='\001') {	/* SOH, insert marker */
+		inhdr++;
+		c = ' ';
+	}
+	peekc = c;
+	return(c);
+}
+
+/*
+ * is a break or continue legal?
+ */
+chconbrk(l)
+{
+	if (l==0)
+		error("Break/continue error");
+}
+
+/*
+ * The goto statement.
+ */
+dogoto()
+{
+	register struct tnode *np;
+
+	*cp++ = tree();
+	build(STAR);
+	chkw(np = *--cp, -1);
+	rcexpr(block(1,JUMP,0,0,np));
+}
+
+/*
+ * The return statement, which has to convert
+ * the returned object to the function's type.
+ */
+doret()
+{
+	register struct tnode *t;
+
+	if (nextchar() != ';') {
+		t = tree();
+		*cp++ = &funcblk;
+		*cp++ = t;
+		build(ASSIGN);
+		cp[-1] = cp[-1]->tr2;
+		build(RFORCE);
+		rcexpr(*--cp);
+	}
+	branch(retlab);
+}
+
+/*
+ * write out a character to the usual output
+ * or to the string file
+ */
+putchar(c)
+{
+	write(1, &c, 1);
+}
+
+outcode(s, a)
+char *s;
+{
+	register char *sp;
+	register *ap, *bufp;
+	int n;
+	char *np;
+
+	bufp = obuf;
+	if (strflg)
+		bufp = sbuf;
+	ap = &a;
+	for (;;) switch(*s++) {
+	case 'B':
+		putw(*ap++ | (0376<<8), bufp);
+		continue;
+
+	case 'N':
+		putw(*ap++, bufp);
+		continue;
+
+	case 'S':
+		np = *ap++;
+		n = ncps;
+		while (n-- && *np) {
+			putc(*np++, bufp);
+		}
+		putc(0, bufp);
+		continue;
+
+	case '1':
+		putw(1, bufp);
+		continue;
+
+	case '0':
+		putw(0, bufp);
+		continue;
+
+	case '\0':
+		return;
+	}
+	error("Botch in outcode");
+}

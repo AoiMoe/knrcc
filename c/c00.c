@@ -1,17 +1,26 @@
 #
 /* C compiler
-
-Copyright 1972 Bell Telephone Laboratories, Inc. 
-
-*/
+ *
+ *
+ *
+ * Called from cc:
+ *   c0 source temp1 temp2 [ profileflag ]
+ * temp1 contains some ascii text and the binary expression
+ * trees.  Each tree is introduced by the # character.
+ * Strings are put on temp2, which cc tacks onto
+ * temp1 for assembly.
+ */
 
 #include "c0h.c"
 
-int	isn 1;
-int	peeksym -1;
-int	line 1;
-int	debug 0;
+int	isn	1;
+int	stflg	1;
+int	peeksym	-1;
+int	line	1;
+int	debug	0;
 int	dimp	0;
+struct	tname	funcblk { NAME, 0, 0, REG, 0, 0 };
+int	*treespace { osspace };
 
 struct kwtab {
 	char	*kwname;
@@ -23,6 +32,7 @@ struct kwtab {
 	"float",	FLOAT,
 	"double",	DOUBLE,
 	"struct",	STRUCT,
+	"long",		LONG,
 	"auto",		AUTO,
 	"extern",	EXTERN,
 	"static",	STATIC,
@@ -46,12 +56,12 @@ struct kwtab {
 main(argc, argv)
 char *argv[];
 {
-	extern fin, fout;
-	int treespace[ossiz];
-	register char *sp, *np;
+	extern fin;
+	register char *sp;
+	register i;
 	register struct kwtab *ip;
 
-	if(argc<4) {
+	if(argc<3) {
 		error("Arg count");
 		exit(1);
 	}
@@ -59,48 +69,64 @@ char *argv[];
 		error("Can't find %s", argv[1]);
 		exit(1);
 	}
-	if (fcreat(argv[2], &fout)<0 || fcreat(argv[3], binbuf)<0) {
+	if (fcreat(argv[2], obuf)<0 || fcreat(argv[3], sbuf)<0) {
 		error("Can't create temp");
 		exit(1);
 	}
 	if (argc>4)
 		proflg++;
-	xdflg++;
-	for (ip=kwtab; (np = ip->kwname); ip++) {
-		for (sp = symbuf; sp<symbuf+ncps;)
-			if ((*sp++ = *np++) == '\0')
-				np--;
-		np = lookup();
-		np->hclass = KEYWC;
-		np->htype = ip->kwval;
+	/*
+	 * The hash table locations of the keywords
+	 * are marked; if an identifier hashes to one of
+	 * these locations, it is looked up in in the keyword
+	 * table first.
+	 */
+	for (ip=kwtab; (sp = ip->kwname); ip++) {
+		i = 0;
+		while (*sp)
+			i =+ *sp++;
+		hshtab[i%hshsiz].hflag = FKEYW;
 	}
-	xdflg = 0;
-	treebase = treespace+10;
-	putw(treebase, binbuf);
 	while(!eof) {
 		extdef();
 		blkend();
 	}
-	flush();
-	fflush(binbuf);
+	outcode("B", EOF);
+	strflg++;
+	outcode("B", EOF);
+	fflush(obuf);
+	fflush(sbuf);
 	exit(nerror!=0);
 }
 
-struct hshtab *lookup()
+/*
+ * Look up the identifier in symbuf in the symbol table.
+ * If it hashes to the same spot as a keyword, try the keyword table
+ * first.  An initial "." is ignored in the hash.
+ * Return is a ptr to the symbol table entry.
+ */
+lookup()
 {
 	int ihash;
 	register struct hshtab *rp;
 	register char *sp, *np;
 
 	ihash = 0;
-	for (sp=symbuf; sp<symbuf+ncps;)
+	sp = symbuf;
+	if (*sp=='.')
+		sp++;
+	while (sp<symbuf+ncps)
 		ihash =+ *sp++;
 	rp = &hshtab[ihash%hshsiz];
+	if (rp->hflag&FKEYW)
+		if (findkw())
+			return(KEYW);
 	while (*(np = rp->name)) {
 		for (sp=symbuf; sp<symbuf+ncps;)
 			if (*np++ != *sp++)
 				goto no;
-		return(rp);
+		csym = rp;
+		return(NAME);
 	no:
 		if (++rp >= &hshtab[hshsiz])
 			rp = hshtab;
@@ -113,13 +139,49 @@ struct hshtab *lookup()
 	rp->htype = 0;
 	rp->hoffset = 0;
 	rp->dimp = 0;
-	rp->hflag = xdflg;
+	rp->hflag =| xdflg;
 	sp = symbuf;
 	for (np=rp->name; sp<symbuf+ncps;)
 		*np++ = *sp++;
-	return(rp);
+	csym = rp;
+	return(NAME);
 }
 
+/*
+ * Search the keyword table.
+ * Ignore initial "." to avoid member-of-structure
+ * problems.
+ */
+findkw()
+{
+	register struct kwtab *kp;
+	register char *p1, *p2;
+	char *wp;
+
+	wp = symbuf;
+	if (*wp=='.')
+		wp++;
+	for (kp=kwtab; (p2 = kp->kwname); kp++) {
+		p1 = wp;
+		while (*p1 == *p2++)
+			if (*p1++ == '\0') {
+				cval = kp->kwval;
+				return(1);
+			}
+	}
+	return(0);
+}
+
+
+/*
+ * Return the next symbol from the input.
+ * peeksym is a pushed-back symbol, peekc is a pushed-back
+ * character (after peeksym).
+ * mosflg means that the next symbol, if an identifier,
+ * is a member of structure or a structure tag, and it
+ * gets a "." prepended to it to distinguish
+ * it from other identifiers.
+ */
 symbol() {
 	register c;
 	register char *sp;
@@ -170,14 +232,12 @@ loop:
 		if (subseq(' ',0,1)) return(ASSIGN);
 		c = symbol();
 		if (c>=PLUS && c<=EXOR) {
-			if (peekc==0)
-				peekc = getchar();
-			if (ctab[peekc] != SPACE 
+			if (spnextchar() != ' '
 			 && (c==MINUS || c==AND || c==TIMES)) {
 				error("Warning: assignment operator assumed");
 				nerror--;
 			}
-			return(c+30);
+			return(c+ASPLUS-PLUS);
 		}
 		if (c==ASSIGN)
 			return(EQUAL);
@@ -198,30 +258,19 @@ loop:
 	case DIVIDE:
 		if (subseq('*',1,0))
 			return(DIVIDE);
-com:
-		c = getchar();
-com1:
-		switch(c) {
-		case '\0':
-			eof++;
+		while ((c = spnextchar()) != EOF) {
+			peekc = 0;
+			if (c=='*') {
+				if (spnextchar() == '/') {
+					peekc = 0;
+					c = getchar();
+					goto loop;
+				}
+			}
+		}
+		eof++;
 			error("Nonterminated comment");
 			return(0);
-		case '\n':
-			if (!inhdr)
-				line++;
-			inhdr = 0;
-			goto com;
-		case 001:		/* SOH, insert marker */
-			inhdr++;
-		default:
-			goto com;
-		case '*':
-			c = getchar();
-			if (c!='/')
-				goto com1;
-		}
-		c = getchar();
-		goto loop;
 
 	case PERIOD:
 	case DIGIT:
@@ -249,14 +298,9 @@ com1:
 		while(sp<symbuf+ncps)
 			*sp++ = '\0';
 		peekc = c;
-		csym = lookup();
-		if (csym->hclass==KEYWC) {
-			if (csym->htype==SIZEOF)
-				return(SIZEOF);
-			cval = csym->htype;
-			return(KEYW);
-		}
-		return(NAME);
+		if ((c=lookup())==KEYW && cval==SIZEOF)
+			c = SIZEOF;
+		return(c);
 
 	case AND:
 		return(subseq('&', AND, LOGAND));
@@ -273,31 +317,67 @@ com1:
 	return(ctab[c]);
 }
 
-subseq(c,a,b) {
-	if (!peekc)
-		peekc = getchar();
-	if (peekc != c)
+/*
+ * If the next input character is c, return a and advance.
+ * Otherwise push back the character and return a.
+ */
+subseq(c,a,b)
+{
+	if (spnextchar() != c)
 		return(a);
 	peekc = 0;
 	return(b);
 }
 
-getstr() {
+/*
+ * Read a double-quoted string, placing it on the
+ * string buffer.
+ */
+getstr()
+{
 	register int c;
-	register char *t, *d;
+	register char *sp;
 
 	nchstr = 1;
-	t = ".text";
-	d = ".data";
-	printf("%s\nL%d:.byte ", (strflg?t:d), cval=isn++);
+	sp = savstr;
 	while((c=mapch('"')) >= 0) {
-		printf("%o,", c);
 		nchstr++;
+		if (sp >= &savstr[STRSIZ]) {
+			sp = savstr;
+			error("String too long");
+		}
+		*sp++ = c;
 	}
-	printf("0\n.even\n%s\n", (strflg?d:t));
+	strptr = sp;
+	cval = isn++;
 	return(STRING);
 }
 
+/*
+ * Write out a string, either in-line
+ * or in the string temp file labelled by
+ * lab.
+ */
+putstr(lab)
+{
+	register char *sp;
+
+	if (lab) {
+		strflg++;
+		outcode("BNB", LABEL, lab, BDATA);
+	} else
+		outcode("B", BDATA);
+	for (sp = savstr; sp<strptr; )
+		outcode("1N", *sp++ & 0377);
+	outcode("100");
+	strflg = 0;
+}
+
+/*
+ * read a single-quoted character constant.
+ * The routine is sensitive to the layout of
+ * characters in a word.
+ */
 getcc()
 {
 	register int c, cc;
@@ -307,23 +387,27 @@ getcc()
 	ccp = &cval;
 	cc = 0;
 	while((c=mapch('\'')) >= 0)
-		if(cc++ < ncpw)
+		if(cc++ < NCPW)
 			*ccp++ = c;
-	if(cc>ncpw)
+	if(cc>NCPW)
 		error("Long character constant");
 	return(CON);
 }
 
+/*
+ * Read a character in a string or character constant,
+ * detecting the end of the string.
+ * It implements the escape sequences.
+ */
 mapch(ac)
 {
 	register int a, c, n;
 	static mpeek;
 
 	c = ac;
-	if (mpeek) {
-		a = mpeek;
+	if (a = mpeek)
 		mpeek = 0;
-	} else
+	else
 		a = getchar();
 loop:
 	if (a==c)
@@ -374,6 +458,13 @@ loop:
 	return(a);
 }
 
+/*
+ * Read an expression and return a pointer to its tree.
+ * It's the classical bottom-up, priority-driven scheme.
+ * The initflg prevents the parse from going past
+ * "," or ":" because those delimitesrs are special
+ * in initializer (and some other) expressions.
+ */
 tree()
 {
 #define	SEOF	200
@@ -381,10 +472,9 @@ tree()
 	int *op, opst[SSIZE], *pp, prst[SSIZE];
 	register int andflg, o;
 	register struct hshtab *cs;
-	int p, ps, os, *np;
+	int p, ps, os;
 
-	osleft = ossiz;
-	space = treebase;
+	space = treespace;
 	op = opst;
 	pp = prst;
 	cp = cmst;
@@ -410,22 +500,13 @@ advanc:
 				if (cs->hoffset==0)
 					cs->hoffset = isn++;
 			}
-		*cp++ = block(2,NAME,cs->htype,cs->hdimp,
-		    cs->hclass,0);
-		if (cs->hclass==EXTERN) {
-			np = cs->name;
-			for (o=0; o<4; o++) {
-				pblock(*np);
-				if (((*np++)&~0177) == 0)
-					break;
-			}
-		} else
-			pblock(cs->hoffset);
+		*cp++ = copname(cs);
 		goto tand;
 
 	case FCON:
 		if (!initflg)
-			printf(".data\nL%d:%o;%o;%o;%o\n.text\n",cval,fcval);
+			outcode("BBNB1N1N1N1N0B", DATA,LABEL,
+			    cval, WDATA, fcval, PROG);
 
 	case CON:
 	case SFCON:
@@ -434,6 +515,7 @@ advanc:
 
 	/* fake a static char array */
 	case STRING:
+		putstr(cval);
 		*cp++ = block(3, NAME, ARRAY+CHAR,0,STATIC,0,cval);
 
 tand:
@@ -558,7 +640,14 @@ opon1:
 	case MCALL:
 		*cp++ = block(0,0,0,0);	/* 0 arg call */
 		os = CALL;
-		goto fbuild;
+		break;
+
+	case INCBEF:
+	case INCAFT:
+	case DECBEF:
+	case DECAFT:
+		*cp++ = block(1, CON, INT, 0, 1);
+		break;
 
 	case LPARN:
 		if (o!=RPARN)
@@ -571,7 +660,6 @@ opon1:
 		build(LBRACK);
 		goto advanc;
 	}
-fbuild:
 	build(os);
 	goto opon1;
 
@@ -581,163 +669,41 @@ syntax:
 	return(0);
 }
 
-declare(askw, tkw, offset, elsize)
+/*
+ * Generate a tree node for a name.
+ * All the relevant info from the symbol table is
+ * copied out, including the name if it's an external.
+ * This is because the symbol table is gone in the next
+ * pass, so a ptr isn't sufficient.
+ */
+copname(acs)
+struct hshtab *acs;
 {
-	register int o;
-	register int skw;
+	register struct hshtab *cs;
+	register struct tname *tp;
+	register char *cp1;
+	int i;
+	char *cp2;
 
-	skw = askw;
-	do {
-		offset =+ decl1(skw, tkw, offset, elsize);
-		if (xdflg && skw!=MOS)
-			return;
-	} while ((o=symbol()) == COMMA);
-	if (o==SEMI || o==RPARN && skw==ARG1)
-		return(offset);
-	decsyn(o);
+	cs = acs;
+	tp = gblock(sizeof(*tp)/NCPW);
+	tp->op = NAME;
+	tp->type = cs->htype;
+	tp->dimp = cs->hdimp;
+	if ((tp->class = cs->hclass)==0)
+		tp->class = STATIC;
+	tp->offset = 0;
+	tp->nloc = cs->hoffset;
+	if (cs->hclass==EXTERN) {
+		gblock((ncps-NCPW)/NCPW);
+		cp1 = tp->nname;
+		cp2 = cs->name;
+		i = ncps;
+		do {
+			*cp1++ = *cp2++;
+		} while (--i);
+	}
+	if (cs->hflag&FFIELD)
+		tp->class = FMOS;
+	return(tp);
 }
-
-decl1(askw, tkw, offset, elsize)
-{
-	int t1, chkoff;
-	register int type, skw;
-	register struct hshtab *dsym;
-
-	skw = askw;
-	chkoff = 0;
-	mosflg = skw==MOS;
-	if ((peeksym=symbol())==SEMI || peeksym==RPARN)
-		return(0);
-	if ((t1=getype()) < 0)
-		goto syntax;
-	type = 0;
-	do
-		type = type<<2 | (t1 & 030);
-	while (((t1=>>2) & 030)!=0);
-	type =| tkw;
-	dsym = defsym;
-	if (!(dsym->hclass==0
-	   || (skw==ARG && dsym->hclass==ARG1)
-	   || (skw==EXTERN && dsym->hclass==EXTERN && dsym->htype==type)))
-		if (skw==MOS && dsym->hclass==MOS && dsym->htype==type)
-			chkoff = 1;
-		else {
-			redec();
-			goto syntax;
-		}
-	dsym->htype = type;
-	if (skw)
-		dsym->hclass = skw;
-	if (skw==ARG1) {
-		if (paraml==0)
-			paraml = dsym;
-		else
-			parame->hoffset = dsym;
-		parame = dsym;
-	}
-	if (elsize && ((type&07)==RSTRUCT || (type&07)==STRUCT)) {
-		dsym->lenp = dimp;
-		chkdim();
-		dimtab[dimp++] = elsize;
-	}
-	elsize = 0;
-	if (skw==MOS) {
-		elsize = length(dsym);
-		if ((offset&1)!=0 && elsize!=1) {
-			offset++;
-			elsize++;
-		}
-		if (chkoff && dsym->hoffset != offset)
-			redec();
-		dsym->hoffset = offset;
-	}
-	if ((dsym->htype&030)==FUNC) {
-		if (dsym->hclass!=EXTERN && dsym->hclass!=AUTO)
-			error("Bad function");
-		dsym->hclass = EXTERN;
-	}
-	if (dsym->hclass==AUTO) {
-		autolen =+ rlength(dsym);
-		dsym->hoffset = -autolen;
-	} else if (dsym->hclass==STATIC) {
-		dsym->hoffset = isn;
-		printf(".bss\nL%d:.=.+%o\n.text\n", isn++, rlength(dsym));
-	} else if (dsym->hclass==REG) {
-		if ((type&07)>CHAR && (type&030)==0
-		 || (type&030)>PTR || regvar<3)
-			error("Bad register %o", type);
-		dsym->hoffset = --regvar;
-	}
-syntax:
-	return(elsize);
-}
-
-getype()
-{
-	register int o, type;
-	register struct hshtab *ds;
-
-	switch(o=symbol()) {
-
-	case TIMES:
-		return(getype()<<2 | PTR);
-
-	case LPARN:
-		type = getype();
-		if ((o=symbol()) != RPARN)
-			goto syntax;
-		goto getf;
-
-	case NAME:
-		defsym = ds = csym;
-		type = 0;
-		ds->ssp = dimp;
-	getf:
-		switch(o=symbol()) {
-
-		case LPARN:
-			if (xdflg) {
-				xdflg = 0;
-				ds = defsym;
-				declare(ARG1, 0, 0, 0);
-				defsym = ds;
-				xdflg++;
-			} else
-				if ((o=symbol()) != RPARN)
-					goto syntax;
-			type = type<<2 | FUNC;
-			goto getf;
-
-		case LBRACK:
-			if ((o=symbol()) != RBRACK) {
-				peeksym = o;
-				cval = conexp();
-				for (o=ds->ssp&0377; o<dimp; o++)
-					dimtab[o] =* cval;
-				dimtab[dimp++] = cval;
-				if ((o=symbol())!=RBRACK)
-					goto syntax;
-			} else
-				dimtab[dimp++] = 1;
-			type = type<<2 | ARRAY;
-			goto getf;
-		}
-		peeksym = o;
-		return(type);
-	}
-syntax:
-	decsyn(o);
-	return(-1);
-}
-
-decsyn(o)
-{
-	error("Declaration syntax");
-	errflush(o);
-}
-
-redec()
-{
-	error("%.8s redeclared", defsym->name);
-}
-
