@@ -1,0 +1,6 @@
+c/*.o
+c/*.a
+c/cvopt
+**/*~
+knrcc.sh
+sync.sh
